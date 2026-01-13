@@ -15,7 +15,7 @@ export default function TruecallerAuth() {
     const params = new URLSearchParams({
       type: "btmsheet",
       requestNonce: nonce,
-      partnerKey: "tBoZJ5a56cdf619e24cac849d3a431e026499", // Your App Key
+      partnerKey: "zsyH7238a78c4b043444a96c02b328d657515", // Your App Key
       partnerName: "Quikkred",
       lang: "en",
       privacyUrl: "https://app-alpha.quikkred.in/privacy",
