@@ -16,7 +16,7 @@ export default function TruecallerRealTest() {
     setStatus("Opening Truecaller app... Approve and return to this tab");
 
     // Use your real partner key from Truecaller dashboard via .env
-    const partnerKey = process.env.NEXT_PUBLIC_TRUECALLER_PARTNER_KEY;
+    const partnerKey = process.env.NEXT_PUBLIC_TRUECALLER_PARTNER_KEY || "zsyH7238a78c4b043444a96c02b328d657515";
 
     if (!partnerKey) {
       setStatus("Error: Missing Truecaller Partner Key (check .env)");
@@ -27,7 +27,7 @@ export default function TruecallerRealTest() {
       type: "btmsheet",
       requestNonce: id,
       partnerKey: partnerKey,
-      partnerName: "Quikkred", // Use your actual app name
+      partnerName: "test", // Use your actual app name
       lang: "en",
       privacyUrl: `${window.location.origin}/privacy`,
       termsUrl: `${window.location.origin}/terms`,
