@@ -12,50 +12,70 @@ export default function TruecallerRealTest() {
   const startLogin = () => {
     const id = uuidv4();
     setNonce(id);
-    setStatus("Opening Truecaller...");
     setProfile(null);
+    setStatus("Opening Truecaller app... Approve and return to this tab");
 
-    const partnerKey = "zsyH7238a78c4b043444a96c02b328d657515";
+    // Use your real partner key from Truecaller dashboard via .env
+    const partnerKey = process.env.NEXT_PUBLIC_TRUECALLER_PARTNER_KEY;
+
+    if (!partnerKey) {
+      setStatus("Error: Missing Truecaller Partner Key (check .env)");
+      return;
+    }
+
     const params = new URLSearchParams({
       type: "btmsheet",
       requestNonce: id,
       partnerKey: partnerKey,
-      partnerName: "test",
+      partnerName: "Quikkred", // Use your actual app name
       lang: "en",
       privacyUrl: `${window.location.origin}/privacy`,
       termsUrl: `${window.location.origin}/terms`,
       loginPrefix: "Continue",
       ctaPrefix: "Verify with",
       btnShape: "rounded",
-      ttl: "600000",
+      ttl: "600000", // 10 minutes
     });
 
     const deepLink = `truecallersdk://truesdk/web_verify?${params.toString()}`;
-    // window.location.href = deepLink;
-    // Try to open app without fully navigating away
-    const opened = window.open(deepLink, '_blank') || window.location.assign(deepLink);
-    console.log("Truecaller Deep Link Opened:", opened);
+
+    // Standard way: redirect to deep link (works reliably on mobile Android)
+    window.location.href = deepLink;
+
+    // Fallback check: if page still focused after 2.5s, Truecaller app likely not installed
+    setTimeout(() => {
+      if (document.hasFocus()) {
+        setStatus("Truecaller app not detected. Please install Truecaller or use manual verification.");
+      }
+    }, 2500);
   };
 
   useEffect(() => {
     if (!nonce || profile) return;
 
-    // Start Polling the GET route every 2 seconds
     intervalRef.current = setInterval(async () => {
-      setStatus("Polling Server for data...");
+      setStatus("Polling for verification... (return to this tab after approving)");
+
       try {
-        const res = await fetch(`/api/truecaller/status?nonce=${nonce}`);
+        // Fixed: Match your API route path (assuming app/api/truecaller/route.ts)
+        const res = await fetch(`/api/truecaller?nonce=${nonce}`);
+        
+        if (!res.ok) {
+          console.error("Polling error:", res.status);
+          return;
+        }
+
         const data = await res.json();
 
         if (data.status === "verified") {
           setProfile(data.profile);
-          setStatus("Identity Verified!");
+          setStatus("Identity Verified Successfully!");
           clearInterval(intervalRef.current);
         }
       } catch (e) {
-        console.error("Polling...");
+        console.error("Polling failed:", e);
       }
-    }, 2000);
+    }, 3000); // Slightly longer interval to reduce load
 
     return () => clearInterval(intervalRef.current);
   }, [nonce, profile]);
@@ -64,7 +84,8 @@ export default function TruecallerRealTest() {
     <div className="p-6 max-w-md mx-auto space-y-6">
       <button
         onClick={startLogin}
-        className="w-full bg-[#0087FF] text-white py-4 rounded-xl font-bold shadow-lg"
+        disabled={!!nonce && !profile}
+        className="w-full bg-[#0087FF] text-white py-4 rounded-xl font-bold shadow-lg disabled:opacity-50"
       >
         Login with Mobile Number
       </button>
@@ -73,22 +94,21 @@ export default function TruecallerRealTest() {
         <strong>Status:</strong> {status}
       </div>
 
-      {/* --- REAL DATA PRINT --- */}
       {profile && (
-        <div className="border-2 border-green-500 bg-green-50 p-6 rounded-2xl shadow-xl animate-bounce">
+        <div className="border-2 border-green-500 bg-green-50 p-6 rounded-2xl shadow-xl">
           <h2 className="text-green-700 font-black text-center border-b border-green-200 pb-2 mb-4">
             REAL PROFILE DATA
           </h2>
           <div className="space-y-2 text-sm text-gray-800">
-            <p><strong>NAME:</strong> {profile.firstName} {profile.lastName}</p>
-            <p><strong>PHONE:</strong> {profile.phoneNumbers?.[0]}</p>
-            <p><strong>EMAIL:</strong> {profile.email || "Not Provided"}</p>
+            <p><strong>NAME:</strong> {profile.name?.first} {profile.name?.last || profile.firstName} {profile.lastName}</p>
+            <p><strong>PHONE:</strong> {profile.phoneNumbers?.[0] || profile.phoneNumber}</p>
+            <p><strong>EMAIL:</strong> {profile.email || profile.onlineIdentities?.email || "Not Provided"}</p>
             <p><strong>CITY:</strong> {profile.addresses?.[0]?.city || "Not Provided"}</p>
           </div>
 
           <div className="mt-6 pt-4 border-t border-green-200">
             <p className="text-[10px] text-gray-400 font-bold mb-2">RAW JSON DEBUG:</p>
-            <pre className="text-[9px] bg-black text-green-400 p-3 rounded h-32 overflow-auto font-mono">
+            <pre className="text-[9px] bg-black text-green-400 p-3 rounded h-48 overflow-auto font-mono">
               {JSON.stringify(profile, null, 2)}
             </pre>
           </div>
