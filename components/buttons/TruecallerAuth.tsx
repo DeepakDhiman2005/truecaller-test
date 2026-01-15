@@ -1,19 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { signIn } from "next-auth/react";
 import { v4 as uuidv4 } from "uuid";
 import { useRouter } from "next/navigation";
 
-// Define the shape of the Truecaller Profile for better Type Safety
+// ---------------------------------------------------------
+// TYPES
+// ---------------------------------------------------------
+
 type TruecallerProfile = {
   firstName?: string;
   lastName?: string;
   phoneNumbers?: string[];
-  gender?: string;
-  avatarUrl?: string;
   email?: string;
   city?: string;
+  avatarUrl?: string;
   [key: string]: any;
 };
 
@@ -22,121 +24,207 @@ type TcStatusResponse = {
   profile?: TruecallerProfile;
   internalToken?: string;
   error?: string;
+  requestId?: string;
+  endpoint?: string;
   [key: string]: any;
 };
 
+// ---------------------------------------------------------
+// COMPONENT
+// ---------------------------------------------------------
+
 export default function TruecallerAuth() {
+  // State
   const [loading, setLoading] = useState(false);
-  const [debug, setDebug] = useState<TcStatusResponse | null>(null);
   const [polling, setPolling] = useState(false);
+  const [debug, setDebug] = useState<TcStatusResponse | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  
+  // Refs for cleanup to prevent memory leaks if component unmounts
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const router = useRouter();
 
-  // Helper to format the profile into a single string
-  const getProfileString = (profile?: TruecallerProfile) => {
-    if (!profile) return "";
-    const name = `${profile.firstName || ""} ${profile.lastName || ""}`.trim();
-    const phone = profile.phoneNumbers?.[0] || "No Number";
-    const email = profile.email ? `(${profile.email})` : "";
-    return `${name} - ${phone} ${email}`.trim();
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, []);
+
+  // Helper: Format User String safely
+  const formatUserString = (profile?: TruecallerProfile) => {
+    if (!profile) return "Profile data missing";
+    const name = `${profile.firstName || ""} ${profile.lastName || ""}`.trim() || "Unknown Name";
+    const phone = profile.phoneNumbers?.[0] || "No Phone";
+    const email = profile.email || "No Email";
+    return `${name} | ${phone} | ${email}`;
   };
 
   const handleTruecallerLogin = async () => {
+    // 1. Reset State
     setLoading(true);
+    setPolling(false);
     setDebug(null);
+    setErrorMessage(null);
+    if (intervalRef.current) clearInterval(intervalRef.current);
 
-    const nonce = uuidv4();
-    sessionStorage.setItem("tc_nonce", nonce);
-
-    const partnerKey = process.env.NEXT_PUBLIC_TRUECALLER_APP_KEY;
-    const partnerName = process.env.NEXT_PUBLIC_TRUECALLER_APP_NAME || "Quikkred";
-
-    if (!partnerKey) {
-      setLoading(false);
-      setDebug({ status: "failed", error: "Missing API Key" });
-      return;
-    }
-
-    const params = new URLSearchParams({
-      type: "btmsheet",
-      requestNonce: nonce,
-      partnerKey,
-      partnerName,
-      lang: "en",
-      privacyUrl: `${window.location.origin}/privacy`,
-      termsUrl: `${window.location.origin}/terms`,
-      loginPrefix: "Continue",
-      ctaPrefix: "Verify with",
-      btnShape: "rounded",
-      ttl: "600000",
-    });
-
-    window.location.href = `truecallersdk://truesdk/web_verify?${params.toString()}`;
-
-    setTimeout(() => {
-      if (document.hasFocus()) {
-        setLoading(false);
-        router.push("/login?method=otp");
-        return;
+    try {
+      // 2. Configuration Check
+      const partnerKey = process.env.NEXT_PUBLIC_TRUECALLER_APP_KEY;
+      if (!partnerKey) {
+        throw new Error("Configuration Error: NEXT_PUBLIC_TRUECALLER_APP_KEY is missing.");
       }
 
-      setPolling(true);
-      const start = Date.now();
-      const interval = setInterval(async () => {
-        try {
-          const res = await fetch(`/api/auth/truecaller/status?nonce=${nonce}`);
-          const data: TcStatusResponse = await res.json();
-          setDebug(data);
+      const nonce = uuidv4();
+      const params = new URLSearchParams({
+        type: "btmsheet",
+        requestNonce: nonce,
+        partnerKey,
+        partnerName: process.env.NEXT_PUBLIC_TRUECALLER_APP_NAME || "Quikkred",
+        lang: "en",
+        privacyUrl: `${window.location.origin}/privacy`,
+        termsUrl: `${window.location.origin}/terms`,
+        loginPrefix: "Continue",
+        ctaPrefix: "Verify with",
+        btnShape: "rounded",
+        ttl: "600000",
+      });
 
-          if (data?.status === "verified") {
-            clearInterval(interval);
-            setPolling(false);
-            // Sign in with NextAuth after getting the profile
-            await signIn("truecaller", {
-              token: data.internalToken,
-              callbackUrl: "/user",
-            });
-          }
+      // 3. Trigger Deep Link
+      const deepLink = `truecallersdk://truesdk/web_verify?${params.toString()}`;
+      window.location.href = deepLink;
 
-          if (data?.status === "failed" || Date.now() - start > 60000) {
-            clearInterval(interval);
-            setPolling(false);
-            setLoading(false);
-          }
-        } catch (e) {
-          console.error("Polling error", e);
+      // 4. Wait to see if App Opens (Focus Check)
+      setTimeout(() => {
+        // If the document still has focus 600ms later, the app likely didn't open
+        if (document.hasFocus()) {
+          setLoading(false);
+          setErrorMessage("Truecaller app did not open. Please ensure it is installed.");
+          return;
         }
-      }, 2000);
-    }, 1000);
+
+        // 5. Start Polling
+        setPolling(true);
+        const startTime = Date.now();
+
+        intervalRef.current = setInterval(async () => {
+          try {
+            // Stop polling if timeout (60s)
+            if (Date.now() - startTime > 60000) {
+              if (intervalRef.current) clearInterval(intervalRef.current);
+              setLoading(false);
+              setPolling(false);
+              setErrorMessage("Verification timed out. Please try again.");
+              return;
+            }
+
+            const res = await fetch(`/api/auth/truecaller/status?nonce=${nonce}`, {
+              cache: "no-store",
+            });
+
+            if (!res.ok) {
+              // Don't throw immediately on 404/pending, just wait for next tick
+              console.warn("Polling status:", res.status);
+              return; 
+            }
+
+            const data: TcStatusResponse = await res.json();
+            setDebug(data); // Live update debug view
+
+            // SUCCESS CASE
+            if (data?.status === "verified" && data?.internalToken) {
+              if (intervalRef.current) clearInterval(intervalRef.current);
+              setPolling(false);
+              setLoading(false);
+
+              // Auto-login with NextAuth
+              await signIn("truecaller", {
+                token: data.internalToken,
+                callbackUrl: "/user",
+                redirect: false,
+              });
+            } 
+            
+            // FAILED CASE
+            else if (data?.status === "failed") {
+              if (intervalRef.current) clearInterval(intervalRef.current);
+              setLoading(false);
+              setPolling(false);
+              setErrorMessage(data.error || "Truecaller verification failed.");
+            }
+
+          } catch (pollError) {
+            console.error("Polling Error:", pollError);
+            // We do NOT stop polling on network hiccups, only on timeout or explicit fail
+          }
+        }, 2000); // Poll every 2 seconds
+
+      }, 800);
+
+    } catch (err: any) {
+      setLoading(false);
+      setErrorMessage(err.message || "An initialization error occurred.");
+    }
   };
 
   return (
-    <div className="w-full">
+    <div className="w-full max-w-md mx-auto space-y-4">
+      {/* BUTTON */}
       <button
         onClick={handleTruecallerLogin}
         disabled={loading}
-        className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-6 py-2.5 text-sm font-bold text-gray-700 shadow-sm transition-all hover:bg-gray-50 active:scale-95 disabled:opacity-70"
+        className="flex w-full items-center justify-center gap-3 rounded-xl border border-gray-200 bg-white px-6 py-3.5 text-sm font-bold text-gray-800 shadow-sm transition-all hover:bg-gray-50 active:scale-95 disabled:opacity-70"
       >
-        <div className="h-5 w-5 rounded-full bg-[#0087FF] flex items-center justify-center text-white text-[10px]">T</div>
-        <span>{loading ? "Verifying..." : "Continue with Truecaller"}</span>
+        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0087FF] text-[10px] font-bold text-white">
+          T
+        </div>
+        <span>
+          {loading
+            ? polling
+              ? "Waiting for confirmation..."
+              : "Opening Truecaller..."
+            : "Continue with Truecaller"}
+        </span>
       </button>
 
-      {/* ✅ String Format Details below button */}
-      {debug?.status === "verified" && debug.profile && (
-        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-center animate-in fade-in zoom-in duration-300">
-          <p className="text-sm font-semibold text-blue-800">Verified User Details:</p>
-          <p className="text-lg font-bold text-gray-900 mt-1">
-            {getProfileString(debug.profile)}
-          </p>
+      {/* ERROR MESSAGE */}
+      {errorMessage && (
+        <div className="rounded-lg bg-red-50 border border-red-100 p-3 text-center">
+          <p className="text-xs font-semibold text-red-600">Action Failed</p>
+          <p className="text-sm text-red-800">{errorMessage}</p>
         </div>
       )}
 
-      {/* Debug Logs */}
-      <details className="mt-4 opacity-50">
-        <summary className="text-xs cursor-pointer">Raw Debug Data</summary>
-        <pre className="text-[10px] bg-gray-100 p-2 mt-2 overflow-auto">
-          {JSON.stringify(debug, null, 2)}
-        </pre>
-      </details>
+      {/* SUCCESS DISPLAY (HTML String Format) */}
+      {debug?.status === "verified" && debug.profile && (
+        <div className="rounded-lg bg-green-50 border border-green-200 p-4 text-center animate-in fade-in slide-in-from-bottom-2">
+          <p className="text-xs font-bold uppercase tracking-wide text-green-700 mb-1">
+            Identity Verified
+          </p>
+          <code className="block bg-white border border-green-100 p-2 rounded text-xs text-gray-700 break-all font-mono">
+            {formatUserString(debug.profile)}
+          </code>
+        </div>
+      )}
+
+      {/* RAW DEBUGGING PANEL */}
+      <div className="mt-4 border-t pt-4">
+        <details className="group">
+          <summary className="cursor-pointer text-xs font-medium text-gray-400 select-none flex items-center gap-2">
+            <span>Debug Console</span>
+            <span className="h-px flex-1 bg-gray-200"></span>
+          </summary>
+          <div className="mt-2 rounded bg-gray-900 p-3 shadow-inner">
+            <div className="flex justify-between text-[10px] text-gray-400 mb-2 border-b border-gray-700 pb-1">
+              <span>Status: {debug?.status || "idle"}</span>
+              <span>Time: {new Date().toLocaleTimeString()}</span>
+            </div>
+            <pre className="overflow-x-auto text-[10px] leading-4 text-green-400 font-mono">
+              {JSON.stringify(debug || { message: "No data received yet" }, null, 2)}
+            </pre>
+          </div>
+        </details>
+      </div>
     </div>
   );
 }

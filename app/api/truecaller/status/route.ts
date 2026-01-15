@@ -1,10 +1,31 @@
 import { tcStore } from "@/lib/truecallerStore";
 import { NextResponse } from "next/server";
 
+// ✅ GET: Called by your Frontend (Polling)
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const nonce = searchParams.get("nonce");
+
+  if (!nonce) {
+    return NextResponse.json({ ok: false, message: "Missing nonce" }, { status: 400 });
+  }
+
+  // Check memory store for the requestId (nonce)
+  const data = tcStore.get(nonce);
+
+  // If not found, it means Truecaller hasn't called us back yet
+  if (!data) {
+    return NextResponse.json({ status: "pending" });
+  }
+
+  // If found, return the profile/status
+  return NextResponse.json(data);
+}
+
+// ✅ POST: Called by Truecaller Server (Callback)
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
 
-  // Truecaller sends: { requestId, accessToken, endpoint }
   const requestId = body?.requestId;
   const accessToken = body?.accessToken;
   const endpoint = body?.endpoint;
@@ -13,7 +34,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, message: "Invalid payload" }, { status: 400 });
   }
 
-  // 1) store immediately (fast)
+  // 1. Initial pending write (fast)
   tcStore.set(requestId, {
     status: "pending",
     createdAt: Date.now(),
@@ -21,36 +42,35 @@ export async function POST(req: Request) {
     endpoint,
   });
 
-  // 2) respond quickly (Truecaller expects fast 2xx)
+  // 2. Respond immediately to Truecaller so they don't timeout
   const res = NextResponse.json({ ok: true }, { status: 200 });
 
-  // 3) best-effort: fetch profile + mark verified
+  // 3. Background process: Fetch the actual profile
+  // We don't await this so the response (step 2) returns instantly
   (async () => {
     try {
-      // NOTE: some Truecaller endpoints are full profile URLs, some are base URLs.
-      // For testing: call endpoint directly
       const profileRes = await fetch(endpoint, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       const profile = await profileRes.json().catch(() => null);
 
-      // ✅ For testing, we generate a fake internalToken
-      // In real world: call your backend to create session token
-      const internalToken = `tc_test_${requestId}`;
+      // Generate a session token for your app
+      const internalToken = `tc_token_${requestId}_${Date.now()}`;
 
+      // Update the store with the real profile data
       const existing = tcStore.get(requestId);
       tcStore.set(requestId, {
-        ...(existing || { createdAt: Date.now() }),
+        ...(existing || {}),
         status: "verified",
-        profile,
+        profile,        // <--- This is what your frontend needs
         internalToken,
-        accessToken,
         endpoint,
       });
     } catch (e) {
+      console.error("Truecaller Profile Fetch Error:", e);
       const existing = tcStore.get(requestId);
       tcStore.set(requestId, {
-        ...(existing || { createdAt: Date.now() }),
+        ...(existing || {}),
         status: "failed",
         error: "Profile fetch failed",
       });

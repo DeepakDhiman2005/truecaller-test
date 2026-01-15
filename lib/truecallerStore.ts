@@ -1,18 +1,8 @@
-export type TcItem = {
-  status: "pending" | "verified" | "failed";
-  createdAt: number;
+// lib/truecallerStore.ts
 
-  // from Truecaller callback
-  accessToken?: string;
-  endpoint?: string;
+// Use globalThis to survive hot-reloads in development
+const globalForTc = global as unknown as { tcStore: Map<string, any> };
 
-  // fetched from Truecaller (optional)
-  profile?: any;
+export const tcStore = globalForTc.tcStore || new Map();
 
-  // your internal token / session token (demo)
-  internalToken?: string;
-
-  error?: string;
-};
-
-export const tcStore = new Map<string, TcItem>();
+if (process.env.NODE_ENV !== "production") globalForTc.tcStore = tcStore;
