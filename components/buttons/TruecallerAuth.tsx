@@ -1,6 +1,6 @@
 "use client";
 
-import { useSession, signIn } from "next-auth/react";
+import { useSession, signIn, signOut } from "next-auth/react";
 import { useState, useEffect, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 
@@ -66,6 +66,16 @@ export default function TruecallerRealTest() {
     else setStatus("Session loaded from NextAuth (useSession).");
   };
 
+  const handleSignOut = async () => {
+    setStatus("Signing out...");
+    await signOut({ redirect: false }); // stay on same page
+    setSessionUser(null);
+    setProfile(null);
+    setNonce("");
+    await update(); // refresh session state
+    setStatus("Signed out");
+  };
+
   // Polling logic
   useEffect(() => {
     if (!nonce || profile) return;
@@ -129,6 +139,14 @@ export default function TruecallerRealTest() {
         className="w-full bg-black text-white py-3 rounded-xl font-bold shadow-lg"
       >
         Get Session User Details
+      </button>
+
+      {/* ✅ SIGN OUT BUTTON */}
+      <button
+        onClick={handleSignOut}
+        className="w-full bg-red-600 text-white py-3 rounded-xl font-bold shadow-lg"
+      >
+        Sign Out
       </button>
 
       <div className="text-xs font-mono bg-gray-100 p-2 rounded">

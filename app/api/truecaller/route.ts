@@ -6,14 +6,14 @@ export async function POST(req: NextRequest) {
         const body = await req.json();
 
         // 1. Validate Payload from Truecaller
-        if (!body.requestId || !body.accessToken || !body.endpoint) {
+        if (!body.requestId || !body.accessToken) {
             return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
         }
 
         console.log("🔥 Truecaller Callback Received for ID:", body.requestId);
 
         // 2. Fetch Profile from Truecaller immediately
-        const profileRes = await fetch(body.endpoint, {
+        const profileRes = await fetch("https://oauth-account-noneu.truecaller.com/v1/userinfo", {
             headers: { Authorization: `Bearer ${body.accessToken}` },
         });
 
