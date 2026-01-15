@@ -1,13 +1,17 @@
 "use client";
-
-import { useState, useEffect, useRef } from "react";
+import { useSession, signIn } from "next-auth/react"; // add signIn
+import { useState, useEffect, useRef, useMemo } from "react";
 import { v4 as uuidv4 } from "uuid";
 
 export default function TruecallerRealTest() {
   const [nonce, setNonce] = useState("");
-  const [profile, setProfile] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null); // ← uncomment / add this
   const [status, setStatus] = useState("Idle");
-  const intervalRef = useRef<any>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const { data } = useSession();
+
+  // Optional: you can still use session.user for other things
+  // const sessionProfile = useMemo(() => data?.user || null, [data?.user]);
 
   const startLogin = () => {
     const id = uuidv4();
@@ -15,9 +19,7 @@ export default function TruecallerRealTest() {
     setProfile(null);
     setStatus("Opening Truecaller app... Approve and return to this tab");
 
-    // Use your real partner key from Truecaller dashboard via .env
     const partnerKey = process.env.NEXT_PUBLIC_TRUECALLER_PARTNER_KEY || "zsyH7238a78c4b043444a96c02b328d657515";
-
     if (!partnerKey) {
       setStatus("Error: Missing Truecaller Partner Key (check .env)");
       return;
@@ -27,22 +29,19 @@ export default function TruecallerRealTest() {
       type: "btmsheet",
       requestNonce: id,
       partnerKey: partnerKey,
-      partnerName: "test", // Use your actual app name
+      partnerName: "test",
       lang: "en",
       privacyUrl: `${window.location.origin}/privacy`,
       termsUrl: `${window.location.origin}/terms`,
       loginPrefix: "Continue",
       ctaPrefix: "Verify with",
       btnShape: "rounded",
-      ttl: "600000", // 10 minutes
+      ttl: "600000",
     });
 
     const deepLink = `truecallersdk://truesdk/web_verify?${params.toString()}`;
-
-    // Standard way: redirect to deep link (works reliably on mobile Android)
     window.location.href = deepLink;
 
-    // Fallback check: if page still focused after 2.5s, Truecaller app likely not installed
     setTimeout(() => {
       if (document.hasFocus()) {
         setStatus("Truecaller app not detected. Please install Truecaller or use manual verification.");
@@ -50,34 +49,52 @@ export default function TruecallerRealTest() {
     }, 2500);
   };
 
+  // Polling logic
   useEffect(() => {
     if (!nonce || profile) return;
 
     intervalRef.current = setInterval(async () => {
-      setStatus("Polling for verification... (return to this tab after approving)");
-
       try {
-        // Fixed: Match your API route path (assuming app/api/truecaller/route.ts)
         const res = await fetch(`/api/truecaller?nonce=${nonce}`);
-        
-        if (!res.ok) {
-          console.error("Polling error:", res.status);
-          return;
-        }
+        if (!res.ok) return;
 
         const data = await res.json();
+        if (data.status === "pending") return;
 
-        if (data.status === "verified") {
-          setProfile(data.profile);
-          setStatus("Identity Verified Successfully!");
-          clearInterval(intervalRef.current);
-        }
-      } catch (e) {
-        console.error("Polling failed:", e);
+        // Success!
+        setProfile(data.profile);
+        setStatus("Verified successfully! Logged in.");
+
+        // Trigger NextAuth sign-in
+        await signIn("truecaller", {
+          userId: data.auth.userId,
+          accessToken: data.auth.accessToken,
+          refreshToken: data.auth.refreshToken,
+          customerUniqueId: data.auth.customerUniqueId,
+          role: data.auth.role,
+          verifiedAt: data.auth.verifiedAt,
+          phoneNumber: data.phone,
+          name: data.name,
+          email: data.email,
+          redirect: false, // stay on page
+        });
+
+        if (intervalRef.current) clearInterval(intervalRef.current);
+      } catch (err) {
+        console.error("Polling error:", err);
       }
-    }, 3000); // Slightly longer interval to reduce load
+    }, 2000);
 
-    return () => clearInterval(intervalRef.current);
+    // Optional timeout (60 seconds)
+    const timeout = setTimeout(() => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      setStatus("Timeout — please try again");
+    }, 60000);
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      clearTimeout(timeout);
+    };
   }, [nonce, profile]);
 
   return (
@@ -89,11 +106,9 @@ export default function TruecallerRealTest() {
       >
         Login with Mobile Number
       </button>
-
       <div className="text-xs font-mono bg-gray-100 p-2 rounded">
         <strong>Status:</strong> {status}
       </div>
-
       {profile && (
         <div className="border-2 border-green-500 bg-green-50 p-6 rounded-2xl shadow-xl">
           <h2 className="text-green-700 font-black text-center border-b border-green-200 pb-2 mb-4">
@@ -105,7 +120,6 @@ export default function TruecallerRealTest() {
             <p><strong>EMAIL:</strong> {profile.email || profile.onlineIdentities?.email || "Not Provided"}</p>
             <p><strong>CITY:</strong> {profile.addresses?.[0]?.city || "Not Provided"}</p>
           </div>
-
           <div className="mt-6 pt-4 border-t border-green-200">
             <p className="text-[10px] text-gray-400 font-bold mb-2">RAW JSON DEBUG:</p>
             <pre className="text-[9px] bg-black text-green-400 p-3 rounded h-48 overflow-auto font-mono">
