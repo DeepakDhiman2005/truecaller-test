@@ -4,6 +4,8 @@ import CredentialsProvider from "next-auth/providers/credentials";
 // import { API_BASE_URL } from "@/lib/config";
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://alpha.quikkred.in";
 
+const globalStore = globalThis as unknown as { truecallerStore: Map<string, any> };
+
 export const authOptions: AuthOptions = {
     providers: [
         // ✅ Google Login
@@ -68,37 +70,44 @@ export const authOptions: AuthOptions = {
                 }
             },
         }),
+        // ✅ FIXED Truecaller Provider
         CredentialsProvider({
             id: "truecaller",
             name: "Truecaller",
             credentials: {
-                userId: { type: "text" },
-                accessToken: { type: "text" },
-                refreshToken: { type: "text" },
-                customerUniqueId: { type: "text" },
-                role: { type: "text" },
-                verifiedAt: { type: "text" },
-                phoneNumber: { type: "text" },
-                name: { type: "text" },
-                email: { type: "text" },
+                requestId: { label: "Request ID", type: "text" },
             },
-            async authorize(credentials): Promise<any> {
-                if (!credentials?.accessToken || !credentials?.userId) return null;
+            async authorize(credentials) {
+                const nonce = credentials?.requestId;
 
-                // Data comes from trusted server-side flow → safe to accept
+                if (!nonce || !globalStore.truecallerStore) {
+                    throw new Error("No request ID provided");
+                }
+
+                // 1. Look up the data in our Bridge
+                const data = globalStore.truecallerStore.get(nonce);
+
+                if (!data || data.status !== "VERIFIED") {
+                    throw new Error("Verification pending or invalid");
+                }
+
+                // 2. Cleanup (Now it is safe to delete)
+                globalStore.truecallerStore.delete(nonce);
+
+                // 3. Return the User object for the Session
+                // You can also call your Backend API here to register the user if needed
                 return {
-                    id: credentials.userId,
-                    name: credentials.name || null,
-                    email: credentials.email || null,
-                    phoneNumber: credentials.phoneNumber,
-                    accessToken: credentials.accessToken,
-                    refreshToken: credentials.refreshToken,
-                    customerUniqueId: credentials.customerUniqueId,
-                    role: credentials.role,
-                    verifiedAt: credentials.verifiedAt,
+                    id: data.phone, // Use phone as ID
+                    name: data.name,
+                    email: data.email,
+                    phoneNumber: data.phone,
+                    accessToken: data.accessToken,
+                    role: "customer",
+                    verifiedAt: new Date().toISOString(),
+                    customerUniqueId: "TC_" + data.phone // Mock ID or from DB
                 };
-            },
-        }),
+            }
+        })
     ],
 
     session: { strategy: "jwt" },

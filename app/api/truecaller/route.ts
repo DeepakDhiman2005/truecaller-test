@@ -1,103 +1,65 @@
 import { NextRequest, NextResponse } from "next/server";
 
-declare global {
-    var truecallerTempStorage: Map<string, any> | undefined;
-}
+// ✅ Robust Global Storage Setup
+// This ensures the storage persists across hot-reloads in development
+const globalStore = globalThis as unknown as { truecallerStore: Map<string, any> };
+if (!globalStore.truecallerStore) globalStore.truecallerStore = new Map();
 
 export async function POST(req: NextRequest) {
     try {
         const body = await req.json();
-        if (!body?.requestId || !body?.accessToken || !body?.endpoint) {
+
+        // 1. Validate Payload from Truecaller
+        if (!body.requestId || !body.accessToken || !body.endpoint) {
             return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
         }
 
+        console.log("🔥 Truecaller Callback Received for ID:", body.requestId);
+
+        // 2. Fetch Profile from Truecaller immediately
         const profileRes = await fetch(body.endpoint, {
             headers: { Authorization: `Bearer ${body.accessToken}` },
         });
+
         if (!profileRes.ok) {
-            throw new Error(`Truecaller API error: ${profileRes.status}`);
+            console.error("Truecaller API Failed:", await profileRes.text());
+            throw new Error("Failed to verify token with Truecaller");
         }
+
         const profile = await profileRes.json();
+        
+        // 3. Extract Phone (Essential)
+        const phone = profile.phoneNumbers?.[0] || profile.phoneNumber;
+        if (!phone) throw new Error("No phone number in profile");
 
-        if (profile.error || profile.code) {
-            throw new Error(profile.error?.message || "Verification failed");
-        }
-
-        console.log("Truecaller profile fetched:", profile);
-
-        // Extract needed fields (Truecaller response structure varies)
-        const phone = profile.phoneNumbers?.[0] || profile.phoneNumber || profile.payload?.phoneNumber;
-        const firstName = profile.name?.first || profile.firstName || "";
-        const lastName = profile.name?.last || profile.lastName || "";
-        const fullName = `${firstName} ${lastName}`.trim() || null;
-        const email = profile.email || profile.onlineIdentities?.email || null;
-
-        if (!phone) {
-            throw new Error("No phone number in profile");
-        }
-
-        // Call your backend to login/register with verified phone
-        // const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://alpha.quikkred.in";
-        // const loginRes = await fetch(`${API_BASE_URL}/api/auth/customer/truecaller-login`, {
-        //   method: "POST",
-        //   headers: { "Content-Type": "application/json" },
-        //   body: JSON.stringify({
-        //     mobile: phone,
-        //     name: fullName,
-        //     email,
-        //     // add city or other fields if needed
-        //   }),
-        // });
-
-        // if (!loginRes.ok) throw new Error("Backend login failed");
-        // const loginData = await loginRes.json();
-        // if (!loginData?.success || !loginData?.data) throw new Error("Backend login failed");
-
-        // const auth = loginData.data;
-
-        // Store temporarily keyed by nonce (requestId)
-        if (!global.truecallerTempStorage) {
-            global.truecallerTempStorage = new Map<string, any>();
-        }
-        global.truecallerTempStorage.set(body.requestId, {
-            profile,
-            //   auth,
+        // 4. Store Data in Global Map (The Bridge)
+        globalStore.truecallerStore.set(body.requestId, {
+            status: "VERIFIED",
+            profile: profile,
             accessToken: body.accessToken,
-            phone,
-            name: fullName,
-            email,
+            phone: phone,
+            name: `${profile.name?.first || ""} ${profile.name?.last || ""}`.trim(),
+            email: profile.onlineIdentities?.email || null,
         });
 
         return NextResponse.json({ success: true });
     } catch (error: any) {
-        console.error("Truecaller callback error:", error);
-        return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+        console.error("Callback Error:", error);
+        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
     }
 }
 
 export async function GET(req: NextRequest) {
     const nonce = req.nextUrl.searchParams.get("nonce");
-    if (!nonce) {
-        return NextResponse.json({ error: "Missing nonce" }, { status: 400 });
-    }
+    if (!nonce) return NextResponse.json({ status: "pending" });
 
-    if (!global.truecallerTempStorage) {
-        return NextResponse.json({ status: "pending" });
-    }
+    const data = globalStore.truecallerStore.get(nonce);
 
-    const data = global.truecallerTempStorage.get(nonce);
     if (!data) {
         return NextResponse.json({ status: "pending" });
     }
 
-    // One-time use
-    global.truecallerTempStorage.delete(nonce);
-
-    return NextResponse.json({
-        profile: data.profile,
-        auth: data.auth,
-        phone: data.phone,
-        name: data.name,
-        email: data.email,
-    });
+    // ⚠️ DO NOT DELETE HERE. 
+    // Wait for NextAuth to read it, or use a timeout to clean up later.
+    return NextResponse.json({ status: "VERIFIED", profile: data.profile });
 }

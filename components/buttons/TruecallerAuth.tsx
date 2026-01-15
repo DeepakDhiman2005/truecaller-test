@@ -72,25 +72,31 @@ export default function TruecallerRealTest() {
 
     intervalRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`/api/truecaller?nonce=${nonce}`);
+        const res = await fetch(`/api/truecaller?nonce=${nonce}`); // Calls our GET route
         if (!res.ok) return;
 
         const data = await res.json();
-        if (data.status === "pending") return;
 
-        setProfile(data.profile);
-        setStatus("Verified successfully! Logged in.");
+        // If status is 'VERIFIED', we proceed
+        if (data.status === "VERIFIED") {
+          clearInterval(intervalRef.current!); // Stop polling
 
-        await signIn("truecaller", {
-          // IMPORTANT: these keys must match your NextAuth CredentialsProvider fields
-          nonce, // ✅ best: just pass nonce and let authorize() fetch from store
-          redirect: false,
-        });
+          setProfile(data.profile);
+          setStatus("Verified! creating session...");
 
-        // optional: refresh session in client after signIn
-        await update();
+          // ✅ FIX: Pass 'requestId' (which matches the key in NextAuth credentials)
+          const result = await signIn("truecaller", {
+            redirect: false,
+            requestId: nonce,
+          });
 
-        if (intervalRef.current) clearInterval(intervalRef.current);
+          if (result?.ok) {
+            setStatus("Session Created Successfully!");
+            await update(); // Force UI update
+          } else {
+            setStatus("Session Creation Failed: " + result?.error);
+          }
+        }
       } catch (err) {
         console.error("Polling error:", err);
       }
