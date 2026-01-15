@@ -1,81 +1,80 @@
 import { tcStore } from "@/lib/truecallerStore";
 import { NextResponse } from "next/server";
 
-// ✅ GET: Called by your Frontend (Polling)
+// ---------------------------------------------------------
+// GET: Frontend Polling
+// ---------------------------------------------------------
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const nonce = searchParams.get("nonce");
 
-  if (!nonce) {
-    return NextResponse.json({ ok: false, message: "Missing nonce" }, { status: 400 });
-  }
+  console.log(`[GET] Polling for nonce: ${nonce}`);
 
-  // Check memory store for the requestId (nonce)
-  const data = tcStore.get(nonce);
+  if (!nonce) return NextResponse.json({ error: "No nonce" }, { status: 400 });
 
-  // If not found, it means Truecaller hasn't called us back yet
-  if (!data) {
+  const cachedData = tcStore.get(nonce);
+
+  if (!cachedData) {
+    console.log(`[GET] No data found in tcStore for ${nonce} (Still waiting for Truecaller)`);
     return NextResponse.json({ status: "pending" });
   }
 
-  // If found, return the profile/status
-  return NextResponse.json(data);
+  console.log(`[GET] Found data for ${nonce}:`, JSON.stringify(cachedData));
+  return NextResponse.json(cachedData);
 }
 
-// ✅ POST: Called by Truecaller Server (Callback)
+// ---------------------------------------------------------
+// POST: Truecaller Callback
+// ---------------------------------------------------------
 export async function POST(req: Request) {
+  console.log("[POST] Truecaller callback received!");
+  
   const body = await req.json().catch(() => null);
+  console.log("[POST] Payload:", JSON.stringify(body));
 
-  const requestId = body?.requestId;
-  const accessToken = body?.accessToken;
-  const endpoint = body?.endpoint;
+  const { requestId, accessToken, endpoint } = body || {};
 
   if (!requestId || !accessToken || !endpoint) {
-    return NextResponse.json({ ok: false, message: "Invalid payload" }, { status: 400 });
+    console.error("[POST] Invalid Payload received from Truecaller");
+    return NextResponse.json({ ok: false }, { status: 400 });
   }
 
-  // 1. Initial pending write (fast)
-  tcStore.set(requestId, {
-    status: "pending",
-    createdAt: Date.now(),
-    accessToken,
-    endpoint,
-  });
+  // 1. Save pending state
+  tcStore.set(requestId, { status: "pending", requestId });
+  console.log(`[POST] Nonce ${requestId} marked as PENDING in store.`);
 
-  // 2. Respond immediately to Truecaller so they don't timeout
-  const res = NextResponse.json({ ok: true }, { status: 200 });
-
-  // 3. Background process: Fetch the actual profile
-  // We don't await this so the response (step 2) returns instantly
+  // 2. Background Fetch
   (async () => {
     try {
+      console.log(`[FETCH] Calling Truecaller endpoint: ${endpoint}`);
+      
       const profileRes = await fetch(endpoint, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      const profile = await profileRes.json().catch(() => null);
 
-      // Generate a session token for your app
-      const internalToken = `tc_token_${requestId}_${Date.now()}`;
+      if (!profileRes.ok) {
+        throw new Error(`Truecaller API responded with ${profileRes.status}`);
+      }
 
-      // Update the store with the real profile data
-      const existing = tcStore.get(requestId);
+      const profile = await profileRes.json();
+      console.log(`[FETCH] Profile received for ${requestId}:`, JSON.stringify(profile));
+
+      // 3. Update Store with Verified Data
       tcStore.set(requestId, {
-        ...(existing || {}),
         status: "verified",
-        profile,        // <--- This is what your frontend needs
-        internalToken,
-        endpoint,
+        profile: profile,
+        internalToken: `tc_verify_${requestId}`,
+        receivedAt: new Date().toISOString()
       });
-    } catch (e) {
-      console.error("Truecaller Profile Fetch Error:", e);
-      const existing = tcStore.get(requestId);
-      tcStore.set(requestId, {
-        ...(existing || {}),
-        status: "failed",
-        error: "Profile fetch failed",
-      });
+      
+      console.log(`[SUCCESS] Store updated for ${requestId}. Verified!`);
+
+    } catch (err: any) {
+      console.error(`[ERROR] Background fetch failed for ${requestId}:`, err.message);
+      tcStore.set(requestId, { status: "failed", error: err.message });
     }
   })();
 
-  return res;
+  // Response to Truecaller
+  return NextResponse.json({ ok: true }, { status: 200 });
 }
