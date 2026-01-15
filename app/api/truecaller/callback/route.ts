@@ -1,5 +1,5 @@
-import { tcStore } from "@/lib/truecallerStore";
 import { NextResponse } from "next/server";
+import { tcStore } from "@/lib/truecallerStore";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
