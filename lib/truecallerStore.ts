@@ -1,8 +1,10 @@
 // lib/truecallerStore.ts
+const globalStore = globalThis as unknown as { 
+    truecallerTempStorage: Map<string, any> 
+};
 
-// Use globalThis to survive hot-reloads in development
-const globalForTc = global as unknown as { tcStore: Map<string, any> };
+if (!globalStore.truecallerTempStorage) {
+    globalStore.truecallerTempStorage = new Map();
+}
 
-export const tcStore = globalForTc.tcStore || new Map();
-
-if (process.env.NODE_ENV !== "production") globalForTc.tcStore = tcStore;
+export const truecallerStore = globalStore.truecallerTempStorage;

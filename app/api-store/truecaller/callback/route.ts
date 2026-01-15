@@ -1,5 +1,5 @@
+import { truecallerStore } from "@/lib/truecallerStore";
 import { NextResponse } from "next/server";
-import { tcStore } from "@/lib/truecallerStore";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
@@ -14,7 +14,7 @@ export async function POST(req: Request) {
   }
 
   // 1) store immediately (fast)
-  tcStore.set(requestId, {
+  truecallerStore.set(requestId, {
     status: "pending",
     createdAt: Date.now(),
     accessToken,
@@ -38,8 +38,8 @@ export async function POST(req: Request) {
       // In real world: call your backend to create session token
       const internalToken = `tc_test_${requestId}`;
 
-      const existing = tcStore.get(requestId);
-      tcStore.set(requestId, {
+      const existing = truecallerStore.get(requestId);
+      truecallerStore.set(requestId, {
         ...(existing || { createdAt: Date.now() }),
         status: "verified",
         profile,
@@ -48,8 +48,8 @@ export async function POST(req: Request) {
         endpoint,
       });
     } catch (e) {
-      const existing = tcStore.get(requestId);
-      tcStore.set(requestId, {
+      const existing = truecallerStore.get(requestId);
+      truecallerStore.set(requestId, {
         ...(existing || { createdAt: Date.now() }),
         status: "failed",
         error: "Profile fetch failed",

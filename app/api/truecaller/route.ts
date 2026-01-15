@@ -1,9 +1,5 @@
+import { truecallerStore } from "@/lib/truecallerStore";
 import { NextRequest, NextResponse } from "next/server";
-
-// ✅ Robust Global Storage Setup
-// This ensures the storage persists across hot-reloads in development
-const globalStore = globalThis as unknown as { truecallerStore: Map<string, any> };
-if (!globalStore.truecallerStore) globalStore.truecallerStore = new Map();
 
 export async function POST(req: NextRequest) {
     try {
@@ -33,7 +29,7 @@ export async function POST(req: NextRequest) {
         if (!phone) throw new Error("No phone number in profile");
 
         // 4. Store Data in Global Map (The Bridge)
-        globalStore.truecallerStore.set(body.requestId, {
+        truecallerStore.set(body.requestId, {
             status: "VERIFIED",
             profile: profile,
             accessToken: body.accessToken,
@@ -53,7 +49,7 @@ export async function GET(req: NextRequest) {
     const nonce = req.nextUrl.searchParams.get("nonce");
     if (!nonce) return NextResponse.json({ status: "pending" });
 
-    const data = globalStore.truecallerStore.get(nonce);
+    const data = truecallerStore.get(nonce);
 
     if (!data) {
         return NextResponse.json({ status: "pending" });

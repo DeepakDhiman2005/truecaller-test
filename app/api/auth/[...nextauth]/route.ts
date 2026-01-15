@@ -1,10 +1,9 @@
 import NextAuth, { type AuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
+import { truecallerStore } from "@/lib/truecallerStore";
 // import { API_BASE_URL } from "@/lib/config";
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://alpha.quikkred.in";
-
-const globalStore = globalThis as unknown as { truecallerStore: Map<string, any> };
 
 export const authOptions: AuthOptions = {
     providers: [
@@ -80,19 +79,19 @@ export const authOptions: AuthOptions = {
             async authorize(credentials) {
                 const nonce = credentials?.requestId;
 
-                if (!nonce || !globalStore.truecallerStore) {
+                if (!nonce || !truecallerStore) {
                     throw new Error("No request ID provided");
                 }
 
                 // 1. Look up the data in our Bridge
-                const data = globalStore.truecallerStore.get(nonce);
+                const data = truecallerStore.get(nonce);
 
                 if (!data || data.status !== "VERIFIED") {
                     throw new Error("Verification pending or invalid");
                 }
 
                 // 2. Cleanup (Now it is safe to delete)
-                globalStore.truecallerStore.delete(nonce);
+                truecallerStore.delete(nonce);
 
                 // 3. Return the User object for the Session
                 // You can also call your Backend API here to register the user if needed
