@@ -29,7 +29,7 @@ export default function RootLayout({
     <html lang="en">
       <head>
         {/* ✅ Use ONLY the v1 SDK as per your verification code logic */}
-        {/* 'beforeInteractive' ensures it's ready as soon as the page is clickable */}
+        {/* ✅ This exact script tag is required for the v1 SDK */}
         <Script
           src="https://sdk.truecaller.com/web/v1/truecaller-web-sdk.js"
           strategy="beforeInteractive"

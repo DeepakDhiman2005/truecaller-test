@@ -1,24 +1,50 @@
 "use client";
 
 import { useSession, signIn, signOut } from "next-auth/react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
 
 export default function TruecallerRealTest() {
-  const [status, setStatus] = useState("Idle");
-  const [rawProfile, setRawProfile] = useState<any>(null); // State to store direct SDK response
-  const [sessionUser, setSessionUser] = useState<any>(null);
-  const { data: session, status: sessionStatus, update } = useSession();
+  const [status, setStatus] = useState("Initializing... Waiting for SDK");
+  const [isSdkReady, setIsSdkReady] = useState(false);
+  const [rawProfile, setRawProfile] = useState<any>(null); // Success Data
+  const [errorLog, setErrorLog] = useState<any>(null);     // Error Data
+
+  const { data: session } = useSession();
+
+  // ✅ FIX: Wait for window.truecaller to become available
+  useEffect(() => {
+    const checkInterval = setInterval(() => {
+      if ((window as any).truecaller) {
+        setIsSdkReady(true);
+        setStatus("Truecaller SDK Loaded & Ready ✅");
+        clearInterval(checkInterval); // Stop checking once found
+      }
+    }, 100); // Check every 100ms
+
+    // Stop checking after 10 seconds to avoid infinite loops if script fails
+    const timeout = setTimeout(() => clearInterval(checkInterval), 10000);
+
+    return () => {
+      clearInterval(checkInterval);
+      clearTimeout(timeout);
+    };
+  }, []);
 
   const startLogin = async () => {
-    if (!(window as any).truecaller) {
-      setStatus("Truecaller SDK not loaded yet");
+    if (!isSdkReady) {
+      setStatus("Error: SDK is not loaded. Please refresh or check your internet.");
       return;
     }
 
+    setRawProfile(null);
+    setErrorLog(null);
     const requestId = uuidv4();
-    
+
     try {
+      setStatus("Initializing Request...");
+      
+      // 1. Init SDK
       (window as any).truecaller.init({
         partnerKey: process.env.NEXT_PUBLIC_TRUECALLER_PARTNER_KEY || "zsyH7238a78c4b043444a96c02b328d657515",
         requestNonce: requestId,
@@ -26,80 +52,79 @@ export default function TruecallerRealTest() {
         termsUrl: "https://quikkred.vercel.app/terms",
       });
 
-      setStatus("Waiting for user approval in Truecaller...");
+      setStatus("Opening Bottom Sheet... Please check your phone.");
 
+      // 2. Request Verification
       const response = await (window as any).truecaller.requestVerification({
         type: "btmsheet",
       });
 
-      // ✅ 1. Print data directly to state so it shows in HTML
-      console.log("Direct Response:", response);
+      // ✅ SUCCESS: Print Data
+      console.log("Success:", response);
       setRawProfile(response);
-      setStatus("Data received directly from SDK!");
+      setStatus("Verification Successful! See Data Below 👇");
 
-      // ✅ 2. signIn code COMMENTED OUT (Uncomment when ready for production)
-      /*
-      const result = await signIn("truecaller", {
-        redirect: false,
-        profileData: JSON.stringify(response),
-      });
-      if (!result?.error) await update();
+      /* // Uncomment to sign in with NextAuth later
+       await signIn("truecaller", { redirect: false, profileData: JSON.stringify(response) });
       */
 
     } catch (err: any) {
-      setStatus(err.message || "Verification failed");
+      console.error("Truecaller Error:", err);
+      // ✅ FAIL: Print Error JSON
+      setErrorLog(err); 
+      setStatus("Verification Failed. See Error Log Below 👇");
     }
   };
 
   return (
     <div className="p-6 max-w-md mx-auto space-y-6">
+      <h2 className="text-xl font-bold text-center">Truecaller Debugger</h2>
+
+      {/* --- MAIN BUTTON --- */}
       <button
         onClick={startLogin}
-        className="w-full bg-[#0087FF] text-white py-4 rounded-xl font-bold shadow-lg"
+        disabled={!isSdkReady}
+        className={`w-full py-4 rounded-xl font-bold shadow-lg transition-all ${
+          isSdkReady 
+            ? "bg-[#0087FF] text-white hover:scale-105" 
+            : "bg-gray-400 text-gray-200 cursor-not-allowed"
+        }`}
       >
-        Verify with Truecaller
+        {isSdkReady ? "Verify with Truecaller" : "Loading SDK..."}
       </button>
 
       {/* --- STATUS BOX --- */}
-      <div className="text-xs font-mono bg-gray-100 p-3 rounded border">
+      <div className={`text-xs font-mono p-3 rounded border ${
+          status.includes("Success") ? "bg-green-100 border-green-300 text-green-800" :
+          status.includes("Failed") || status.includes("Error") ? "bg-red-100 border-red-300 text-red-800" :
+          "bg-gray-100 border-gray-300 text-gray-700"
+      }`}>
         <strong>Status:</strong> {status}
       </div>
 
-      {/* --- DIRECT DATA DISPLAY (HTML PRINT) --- */}
+      {/* --- ✅ SUCCESS DATA DISPLAY --- */}
       {rawProfile && (
-        <div className="mt-4 p-4 bg-yellow-50 border-2 border-yellow-200 rounded-xl">
-          <h3 className="text-sm font-bold text-yellow-800 mb-2">🚀 Direct SDK Response:</h3>
-          <div className="text-xs space-y-2">
-            <p><strong>Name:</strong> {rawProfile.firstName} {rawProfile.lastName}</p>
-            <p><strong>Phone:</strong> {rawProfile.phoneNumber}</p>
-            <p><strong>Email:</strong> {rawProfile.email || "N/A"}</p>
-            <p><strong>City:</strong> {rawProfile.city || "N/A"}</p>
-          </div>
-          
-          <details className="mt-3">
-            <summary className="text-[10px] cursor-pointer text-blue-600 font-bold">VIEW RAW JSON</summary>
-            <pre className="mt-2 text-[10px] bg-black text-green-400 p-3 rounded overflow-auto max-h-40">
-              {JSON.stringify(rawProfile, null, 2)}
-            </pre>
-          </details>
+        <div className="p-4 bg-green-50 border-2 border-green-200 rounded-xl">
+          <h3 className="text-sm font-bold text-green-800 mb-2">🚀 SUCCESS DATA</h3>
+          <pre className="text-[10px] bg-black text-green-400 p-3 rounded overflow-auto max-h-60">
+            {JSON.stringify(rawProfile, null, 2)}
+          </pre>
         </div>
       )}
 
-      {/* --- ACTIONS --- */}
-      <div className="flex gap-2">
-        <button
-          onClick={() => setSessionUser(session)}
-          className="flex-1 bg-black text-white py-2 rounded-lg text-sm"
-        >
-          Check Session
-        </button>
-        <button
-          onClick={() => signOut()}
-          className="flex-1 bg-red-100 text-red-600 py-2 rounded-lg text-sm font-bold"
-        >
-          Logout
-        </button>
-      </div>
+      {/* --- ❌ ERROR LOG DISPLAY --- */}
+      {errorLog && (
+        <div className="p-4 bg-red-50 border-2 border-red-200 rounded-xl">
+          <h3 className="text-sm font-bold text-red-800 mb-2">⚠️ ERROR LOG</h3>
+          <pre className="text-[10px] bg-black text-red-400 p-3 rounded overflow-auto max-h-60">
+            {JSON.stringify(errorLog, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      <button onClick={() => signOut()} className="w-full text-xs text-gray-500 underline">
+        Reset / Sign Out
+      </button>
     </div>
   );
 }
