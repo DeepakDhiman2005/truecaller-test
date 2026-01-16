@@ -29,11 +29,6 @@ export default function RootLayout({
     <html lang="en">
       <head>
         {/* ✅ Use ONLY the v1 SDK as per your verification code logic */}
-        {/* ✅ This exact script tag is required for the v1 SDK */}
-        <Script
-          src="https://sdk.truecaller.com/web/v1/truecaller-web-sdk.js"
-          strategy="beforeInteractive"
-        />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
@@ -43,6 +38,12 @@ export default function RootLayout({
             {children}
           </AppProvider>
         </Suspense>
+
+        {/* Move the script to the bottom of the body */}
+        <script
+          src="https://sdk.truecaller.com/web/v1/truecaller-web-sdk.js"
+          async
+        />
       </body>
     </html>
   );
