@@ -5,25 +5,37 @@ import { useState, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
 
 export default function TruecallerRealTest() {
-  const [status, setStatus] = useState("Initializing... Waiting for SDK");
+  const [status, setStatus] = useState("Initializing...");
+  const [logs, setLogs] = useState<string[]>([]); // 📱 Virtual Console
   const [isSdkReady, setIsSdkReady] = useState(false);
-  const [rawProfile, setRawProfile] = useState<any>(null); // Success Data
-  const [errorLog, setErrorLog] = useState<any>(null);     // Error Data
+  const [rawProfile, setRawProfile] = useState<any>(null);
 
-  const { data: session } = useSession();
+  // Helper to print logs to the screen
+  const addLog = (msg: string) => {
+    console.log(msg);
+    setLogs((prev) => [...prev, `> ${msg}`]);
+  };
 
-  // ✅ FIX: Wait for window.truecaller to become available
   useEffect(() => {
+    addLog("Checking for Truecaller SDK on window...");
+    
     const checkInterval = setInterval(() => {
-      if ((window as any).truecaller) {
+      if (typeof window !== "undefined" && (window as any).truecaller) {
+        addLog("Truecaller SDK detected on window! ✅");
         setIsSdkReady(true);
-        setStatus("Truecaller SDK Loaded & Ready ✅");
-        clearInterval(checkInterval); // Stop checking once found
+        setStatus("SDK Ready ✅");
+        clearInterval(checkInterval);
       }
-    }, 100); // Check every 100ms
+    }, 1000);
 
-    // Stop checking after 10 seconds to avoid infinite loops if script fails
-    const timeout = setTimeout(() => clearInterval(checkInterval), 10000);
+    // Timeout after 15 seconds
+    const timeout = setTimeout(() => {
+      if (!isSdkReady) {
+        addLog("ERROR: SDK timed out. Check Ad-blocker or Network tab.");
+        setStatus("SDK Load Failed ❌");
+        clearInterval(checkInterval);
+      }
+    }, 15000);
 
     return () => {
       clearInterval(checkInterval);
@@ -32,99 +44,58 @@ export default function TruecallerRealTest() {
   }, []);
 
   const startLogin = async () => {
-    if (!isSdkReady) {
-      setStatus("Error: SDK is not loaded. Please refresh or check your internet.");
-      return;
-    }
-
-    setRawProfile(null);
-    setErrorLog(null);
-    const requestId = uuidv4();
-
+    addLog("Start Login clicked...");
+    const partnerKey = process.env.NEXT_PUBLIC_TRUECALLER_PARTNER_KEY || "zsyH7238a78c4b043444a96c02b328d657515";
+    
     try {
-      setStatus("Initializing Request...");
+      addLog(`Initializing with Key: ${partnerKey.substring(0, 8)}...`);
       
-      // 1. Init SDK
       (window as any).truecaller.init({
-        partnerKey: process.env.NEXT_PUBLIC_TRUECALLER_PARTNER_KEY || "zsyH7238a78c4b043444a96c02b328d657515",
-        requestNonce: requestId,
+        partnerKey: partnerKey,
+        requestNonce: uuidv4(),
         privacyUrl: "https://quikkred.vercel.app/privacy",
         termsUrl: "https://quikkred.vercel.app/terms",
       });
 
-      setStatus("Opening Bottom Sheet... Please check your phone.");
-
-      // 2. Request Verification
+      addLog("Invoking Bottom Sheet...");
       const response = await (window as any).truecaller.requestVerification({
         type: "btmsheet",
       });
 
-      // ✅ SUCCESS: Print Data
-      console.log("Success:", response);
+      addLog("Verification Success!");
       setRawProfile(response);
-      setStatus("Verification Successful! See Data Below 👇");
-
-      /* // Uncomment to sign in with NextAuth later
-       await signIn("truecaller", { redirect: false, profileData: JSON.stringify(response) });
-      */
-
     } catch (err: any) {
-      console.error("Truecaller Error:", err);
-      // ✅ FAIL: Print Error JSON
-      setErrorLog(err); 
-      setStatus("Verification Failed. See Error Log Below 👇");
+      addLog(`FAILED: ${JSON.stringify(err)}`);
     }
   };
 
   return (
-    <div className="p-6 max-w-md mx-auto space-y-6">
-      <h2 className="text-xl font-bold text-center">Truecaller Debugger</h2>
-
-      {/* --- MAIN BUTTON --- */}
+    <div className="p-4 max-w-md mx-auto space-y-4 pb-40">
+      <h2 className="font-bold text-center">Truecaller Vercel Debugger</h2>
+      
       <button
         onClick={startLogin}
         disabled={!isSdkReady}
-        className={`w-full py-4 rounded-xl font-bold shadow-lg transition-all ${
-          isSdkReady 
-            ? "bg-[#0087FF] text-white hover:scale-105" 
-            : "bg-gray-400 text-gray-200 cursor-not-allowed"
-        }`}
+        className={`w-full py-4 rounded-xl font-bold ${isSdkReady ? "bg-blue-600 text-white" : "bg-gray-300 text-gray-500"}`}
       >
-        {isSdkReady ? "Verify with Truecaller" : "Loading SDK..."}
+        {isSdkReady ? "Verify Now" : "Waiting for SDK..."}
       </button>
 
-      {/* --- STATUS BOX --- */}
-      <div className={`text-xs font-mono p-3 rounded border ${
-          status.includes("Success") ? "bg-green-100 border-green-300 text-green-800" :
-          status.includes("Failed") || status.includes("Error") ? "bg-red-100 border-red-300 text-red-800" :
-          "bg-gray-100 border-gray-300 text-gray-700"
-      }`}>
-        <strong>Status:</strong> {status}
-      </div>
-
-      {/* --- ✅ SUCCESS DATA DISPLAY --- */}
+      {/* ✅ SUCCESS DATA */}
       {rawProfile && (
-        <div className="p-4 bg-green-50 border-2 border-green-200 rounded-xl">
-          <h3 className="text-sm font-bold text-green-800 mb-2">🚀 SUCCESS DATA</h3>
-          <pre className="text-[10px] bg-black text-green-400 p-3 rounded overflow-auto max-h-60">
-            {JSON.stringify(rawProfile, null, 2)}
-          </pre>
+        <div className="bg-green-50 p-3 border border-green-200 rounded text-[10px] overflow-auto max-h-40">
+          <p className="font-bold text-green-700">PROFILE DATA:</p>
+          <pre>{JSON.stringify(rawProfile, null, 2)}</pre>
         </div>
       )}
 
-      {/* --- ❌ ERROR LOG DISPLAY --- */}
-      {errorLog && (
-        <div className="p-4 bg-red-50 border-2 border-red-200 rounded-xl">
-          <h3 className="text-sm font-bold text-red-800 mb-2">⚠️ ERROR LOG</h3>
-          <pre className="text-[10px] bg-black text-red-400 p-3 rounded overflow-auto max-h-60">
-            {JSON.stringify(errorLog, null, 2)}
-          </pre>
-        </div>
-      )}
-
-      <button onClick={() => signOut()} className="w-full text-xs text-gray-500 underline">
-        Reset / Sign Out
-      </button>
+      {/* 📱 VIRTUAL CONSOLE (Visible on Mobile) */}
+      <div className="fixed bottom-0 left-0 right-0 bg-black text-green-400 p-3 text-[10px] font-mono h-48 overflow-y-scroll border-t-2 border-green-500">
+        <p className="text-white font-bold border-b border-gray-700 mb-1">MOBILE DEBUG CONSOLE</p>
+        {logs.map((log, i) => (
+          <div key={i}>{log}</div>
+        ))}
+      </div>
     </div>
   );
 }
