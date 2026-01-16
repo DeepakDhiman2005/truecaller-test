@@ -1,223 +1,105 @@
 "use client";
 
 import { useSession, signIn, signOut } from "next-auth/react";
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 
 export default function TruecallerRealTest() {
-  const [nonce, setNonce] = useState("");
-  const [profile, setProfile] = useState<any>(null); // truecaller fetched profile (your polling result)
   const [status, setStatus] = useState("Idle");
-
-  // ✅ NEW: store session user details on button click
+  const [rawProfile, setRawProfile] = useState<any>(null); // State to store direct SDK response
   const [sessionUser, setSessionUser] = useState<any>(null);
-
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const { data: session, status: sessionStatus, update } = useSession();
 
-  const startLogin = () => {
-    const id = uuidv4();
-    setNonce(id);
-    setProfile(null);
-    setStatus("Opening Truecaller app... Approve and return to this tab");
-
-    const partnerKey =
-      process.env.NEXT_PUBLIC_TRUECALLER_PARTNER_KEY ||
-      "zsyH7238a78c4b043444a96c02b328d657515";
-
-    if (!partnerKey) {
-      setStatus("Error: Missing Truecaller Partner Key (check .env)");
+  const startLogin = async () => {
+    if (!(window as any).truecaller) {
+      setStatus("Truecaller SDK not loaded yet");
       return;
     }
 
-    const params = new URLSearchParams({
-      type: "btmsheet",
-      requestNonce: id,
-      partnerKey: partnerKey,
-      partnerName: "test",
-      lang: "en",
-      privacyUrl: `${window.location.origin}/privacy`,
-      termsUrl: `${window.location.origin}/terms`,
-      loginPrefix: "Continue",
-      ctaPrefix: "Verify with",
-      btnShape: "rounded",
-      ttl: "600000",
-    });
+    const requestId = uuidv4();
+    
+    try {
+      (window as any).truecaller.init({
+        partnerKey: process.env.NEXT_PUBLIC_TRUECALLER_PARTNER_KEY || "zsyH7238a78c4b043444a96c02b328d657515",
+        requestNonce: requestId,
+        privacyUrl: "https://quikkred.vercel.app/privacy",
+        termsUrl: "https://quikkred.vercel.app/terms",
+      });
 
-    const deepLink = `truecallersdk://truesdk/web_verify?${params.toString()}`;
-    window.location.href = deepLink;
+      setStatus("Waiting for user approval in Truecaller...");
 
-    setTimeout(() => {
-      if (document.hasFocus()) {
-        setStatus(
-          "Truecaller app not detected. Please install Truecaller or use manual verification."
-        );
-      }
-    }, 2500);
+      const response = await (window as any).truecaller.requestVerification({
+        type: "btmsheet",
+      });
+
+      // ✅ 1. Print data directly to state so it shows in HTML
+      console.log("Direct Response:", response);
+      setRawProfile(response);
+      setStatus("Data received directly from SDK!");
+
+      // ✅ 2. signIn code COMMENTED OUT (Uncomment when ready for production)
+      /*
+      const result = await signIn("truecaller", {
+        redirect: false,
+        profileData: JSON.stringify(response),
+      });
+      if (!result?.error) await update();
+      */
+
+    } catch (err: any) {
+      setStatus(err.message || "Verification failed");
+    }
   };
-
-  // ✅ NEW: button handler to read session and show it
-  const getSessionDetails = async () => {
-    // If you want, you can force refresh session from server:
-    // await update();
-    setSessionUser(session || null);
-
-    if (!session) setStatus("No session found. Please login first.");
-    else setStatus("Session loaded from NextAuth (useSession).");
-  };
-
-  const handleSignOut = async () => {
-    setStatus("Signing out...");
-    await signOut({ redirect: false }); // stay on same page
-    setSessionUser(null);
-    setProfile(null);
-    setNonce("");
-    await update(); // refresh session state
-    setStatus("Signed out");
-  };
-
-  // Polling logic
-  useEffect(() => {
-    if (!nonce || profile) return;
-
-    intervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/truecaller?nonce=${nonce}`); // Calls our GET route
-        if (!res.ok) return;
-
-        const data = await res.json();
-
-        // If status is 'VERIFIED', we proceed
-        if (data.status === "VERIFIED") {
-          clearInterval(intervalRef.current!); // Stop polling
-
-          setProfile(data.profile);
-          setStatus("Verified! creating session...");
-
-          // ✅ FIX: Pass 'requestId' (which matches the key in NextAuth credentials)
-          const result = await signIn("truecaller", {
-            redirect: false,
-            requestId: nonce,
-          });
-
-          if (result?.ok) {
-            setStatus("Session Created Successfully!");
-            await update(); // Force UI update
-          } else {
-            setStatus("Session Creation Failed: " + result?.error);
-          }
-        }
-      } catch (err) {
-        console.error("Polling error:", err);
-      }
-    }, 2000);
-
-    const timeout = setTimeout(() => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      setStatus("Timeout — please try again");
-    }, 60000);
-
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      clearTimeout(timeout);
-    };
-  }, [nonce, profile, update]);
 
   return (
     <div className="p-6 max-w-md mx-auto space-y-6">
       <button
         onClick={startLogin}
-        disabled={!!nonce && !profile}
-        className="w-full bg-[#0087FF] text-white py-4 rounded-xl font-bold shadow-lg disabled:opacity-50"
+        className="w-full bg-[#0087FF] text-white py-4 rounded-xl font-bold shadow-lg"
       >
-        Login with Mobile Number
+        Verify with Truecaller
       </button>
 
-      {/* ✅ NEW BUTTON */}
-      <button
-        onClick={getSessionDetails}
-        className="w-full bg-black text-white py-3 rounded-xl font-bold shadow-lg"
-      >
-        Get Session User Details
-      </button>
-
-      {/* ✅ SIGN OUT BUTTON */}
-      <button
-        onClick={handleSignOut}
-        className="w-full bg-red-600 text-white py-3 rounded-xl font-bold shadow-lg"
-      >
-        Sign Out
-      </button>
-
-      <div className="text-xs font-mono bg-gray-100 p-2 rounded">
+      {/* --- STATUS BOX --- */}
+      <div className="text-xs font-mono bg-gray-100 p-3 rounded border">
         <strong>Status:</strong> {status}
-        <div className="mt-1">
-          <strong>NextAuth:</strong> {sessionStatus}
-        </div>
       </div>
 
-      {/* ✅ Show session details */}
-      {sessionUser && (
-        <div className="border border-gray-300 bg-white p-4 rounded-xl shadow">
-          <h3 className="font-bold mb-2">SESSION (useSession)</h3>
-
-          <div className="text-sm space-y-1">
-            <p>
-              <strong>ID:</strong> {(sessionUser.user as any)?.id || "N/A"}
-            </p>
-            <p>
-              <strong>Email:</strong> {sessionUser.user?.email || "N/A"}
-            </p>
-            <p>
-              <strong>AccessToken:</strong>{" "}
-              {(sessionUser as any)?.accessToken ? "✅ present" : "❌ missing"}
-            </p>
-            <p>
-              <strong>Role:</strong> {(sessionUser as any)?.role || "N/A"}
-            </p>
+      {/* --- DIRECT DATA DISPLAY (HTML PRINT) --- */}
+      {rawProfile && (
+        <div className="mt-4 p-4 bg-yellow-50 border-2 border-yellow-200 rounded-xl">
+          <h3 className="text-sm font-bold text-yellow-800 mb-2">🚀 Direct SDK Response:</h3>
+          <div className="text-xs space-y-2">
+            <p><strong>Name:</strong> {rawProfile.firstName} {rawProfile.lastName}</p>
+            <p><strong>Phone:</strong> {rawProfile.phoneNumber}</p>
+            <p><strong>Email:</strong> {rawProfile.email || "N/A"}</p>
+            <p><strong>City:</strong> {rawProfile.city || "N/A"}</p>
           </div>
-
-          <div className="mt-3">
-            <p className="text-[10px] text-gray-500 font-bold mb-2">RAW SESSION JSON</p>
-            <pre className="text-[10px] bg-gray-900 text-green-400 p-3 rounded max-h-56 overflow-auto">
-              {JSON.stringify(sessionUser, null, 2)}
+          
+          <details className="mt-3">
+            <summary className="text-[10px] cursor-pointer text-blue-600 font-bold">VIEW RAW JSON</summary>
+            <pre className="mt-2 text-[10px] bg-black text-green-400 p-3 rounded overflow-auto max-h-40">
+              {JSON.stringify(rawProfile, null, 2)}
             </pre>
-          </div>
+          </details>
         </div>
       )}
 
-      {/* Your existing Truecaller profile preview */}
-      {profile && (
-        <div className="border-2 border-green-500 bg-green-50 p-6 rounded-2xl shadow-xl">
-          <h2 className="text-green-700 font-black text-center border-b border-green-200 pb-2 mb-4">
-            TRUECALLER PROFILE (POLL RESULT)
-          </h2>
-
-          <div className="space-y-2 text-sm text-gray-800">
-            <p>
-              <strong>NAME:</strong> {profile.name?.first}{" "}
-              {profile.name?.last || profile.firstName} {profile.lastName}
-            </p>
-            <p>
-              <strong>PHONE:</strong> {profile.phoneNumbers?.[0] || profile.phoneNumber}
-            </p>
-            <p>
-              <strong>EMAIL:</strong>{" "}
-              {profile.email || profile.onlineIdentities?.email || "Not Provided"}
-            </p>
-            <p>
-              <strong>CITY:</strong> {profile.addresses?.[0]?.city || "Not Provided"}
-            </p>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-green-200">
-            <p className="text-[10px] text-gray-400 font-bold mb-2">RAW JSON DEBUG:</p>
-            <pre className="text-[9px] bg-black text-green-400 p-3 rounded h-48 overflow-auto font-mono">
-              {JSON.stringify(profile, null, 2)}
-            </pre>
-          </div>
-        </div>
-      )}
+      {/* --- ACTIONS --- */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => setSessionUser(session)}
+          className="flex-1 bg-black text-white py-2 rounded-lg text-sm"
+        >
+          Check Session
+        </button>
+        <button
+          onClick={() => signOut()}
+          className="flex-1 bg-red-100 text-red-600 py-2 rounded-lg text-sm font-bold"
+        >
+          Logout
+        </button>
+      </div>
     </div>
   );
 }

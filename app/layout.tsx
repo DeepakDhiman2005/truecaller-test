@@ -32,6 +32,7 @@ export default function RootLayout({
           src="https://account.truecaller.com/v2/js/tc-web-sdk.min.js"
           strategy="beforeInteractive"
         />
+        <script src="https://sdk.truecaller.com/web/v1/truecaller-web-sdk.js" async />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
