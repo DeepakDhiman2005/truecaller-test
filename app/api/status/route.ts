@@ -2,9 +2,9 @@ import { truecallerLogs } from "@/lib/truecallerStore";
 import { NextResponse } from "next/server";
 
 export async function GET() {
-    // Returns the full history of all callbacks received since server start
+    // Return logs in reverse order (newest first)
     return NextResponse.json({
-        totalLogs: truecallerLogs.length,
-        logs: [...truecallerLogs].reverse() // Newest first
+        total: truecallerLogs.length,
+        logs: [...truecallerLogs].reverse() 
     });
 }
