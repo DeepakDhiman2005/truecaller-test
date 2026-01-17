@@ -1,102 +1,65 @@
-import { truecallerStore, pushLog } from "@/lib/truecallerStore";
+import { createClient } from "redis";
 import { NextRequest, NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
+// Helper: Connect to your specific Redis Labs DB
+const getRedis = async () => {
+  const client = createClient({
+    url: "redis://default:yGjh4ykYDlhxVv88Xd98AFIGzsSKOhRv@redis-12601.c261.us-east-1-4.ec2.cloud.redislabs.com:12601"
+  });
+  if (!client.isOpen) await client.connect();
+  return client;
+};
+
+// Helper: Save a log entry to Redis (List)
+async function pushLog(type: string, message: string, detail: any = null) {
+  const client = await getRedis();
+  const log = JSON.stringify({ timestamp: new Date().toISOString(), type, message, detail });
+  await client.lPush("truecaller_logs", log);
+  await client.lTrim("truecaller_logs", 0, 49); // Keep only last 50
+}
+
 export async function POST(req: NextRequest) {
-    const safeText = async (r: Response) => { try { return await r.text(); } catch { return ""; } };
-    const safeJson = (text: string) => { try { return JSON.parse(text); } catch { return text; } };
+  try {
+    const body = await req.json();
+    const nonce = body.requestId;
 
-    // 🟢 Log entry
-    pushLog("INFO", "Callback POST received from Truecaller");
+    if (!nonce) return NextResponse.json({ error: "Missing requestId" }, { status: 400 });
 
-    try {
-        const body = await req.json().catch((err) => {
-            pushLog("ERROR", "JSON Parsing Failed", err.message);
-            return null;
-        });
+    await pushLog("INFO", `Callback Received for ${nonce}`, body);
 
-        if (!body) return NextResponse.json({ error: "Empty Body" }, { status: 400 });
+    // 1. Fetch Profile from Truecaller
+    const profileRes = await fetch(body.endpoint, {
+      headers: { Authorization: `Bearer ${body.accessToken}` },
+      cache: "no-store",
+    });
+    
+    const profileData = await profileRes.json();
+    const isOk = profileRes.ok;
 
-        // 🟢 Log the ID we are processing
-        pushLog("DEBUG", `Processing RequestID: ${body.requestId}`, body);
+    // 2. Save Final Result to Redis (Expires in 10 minutes)
+    const client = await getRedis();
+    await client.set(nonce, JSON.stringify({
+      status: isOk ? "VERIFIED" : "ERROR",
+      profile: profileData,
+      updatedAt: Date.now()
+    }), { EX: 600 });
 
-        if (!body.requestId || !body.accessToken || !body.endpoint) {
-            pushLog("ERROR", "Invalid Payload: Missing fields", body);
-            return NextResponse.json({ success: false, error: "Invalid Payload" }, { status: 400 });
-        }
+    await pushLog(isOk ? "INFO" : "ERROR", `Verification ${isOk ? 'Success' : 'Failed'}`, profileData);
 
-        truecallerStore.set(body.requestId, {
-            status: "PROCESSING",
-            createdAt: Date.now(),
-            request: body,
-        });
-
-        // --- A) Alpha Backend Sync ---
-        let alphaOk = false;
-        let alphaData = null;
-        try {
-            pushLog("INFO", "Forwarding to Alpha Backend...");
-            const alphaRes = await fetch("https://alpha.quikkred.in/test2/truecaller/callback", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-                cache: "no-store",
-            });
-            alphaOk = alphaRes.ok;
-            alphaData = safeJson(await safeText(alphaRes));
-            
-            if (!alphaOk) pushLog("ERROR", `Alpha Backend returned ${alphaRes.status}`, alphaData);
-            else pushLog("INFO", "Alpha Backend Sync Success", alphaData);
-            
-        } catch (e: any) {
-            pushLog("ERROR", "Alpha Fetch Exception", e.message);
-        }
-
-        // --- B) Truecaller Profile Fetch ---
-        let profileOk = false;
-        let profileData = null;
-        try {
-            pushLog("INFO", "Fetching Profile from Truecaller...");
-            const profileRes = await fetch(body.endpoint, {
-                headers: { Authorization: `Bearer ${body.accessToken}` },
-                cache: "no-store",
-            });
-            profileOk = profileRes.ok;
-            profileData = safeJson(await safeText(profileRes));
-            
-            if (!profileOk) pushLog("ERROR", `Profile Fetch Failed: ${profileRes.status}`, profileData);
-            
-        } catch (e: any) {
-            pushLog("ERROR", "Profile Fetch Exception", e.message);
-        }
-
-        // 🟢 Final Decision & Log
-        const resultStatus = profileOk ? "VERIFIED" : "ERROR";
-        
-        truecallerStore.set(body.requestId, {
-            status: resultStatus,
-            profile: profileData,
-            alphaCallback: { ok: alphaOk, data: alphaData },
-            verify: { ok: profileOk, data: profileData },
-            createdAt: Date.now()
-        });
-
-        pushLog(
-            resultStatus === "VERIFIED" ? "INFO" : "ERROR", 
-            `Process Complete: ${resultStatus}`, 
-            { profileOk, alphaOk }
-        );
-
-        return NextResponse.json({ success: true });
-
-    } catch (error: any) {
-        pushLog("ERROR", "CRITICAL API EXCEPTION", error.message);
-        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
-    }
+    return NextResponse.json({ success: true });
+  } catch (error: any) {
+    await pushLog("ERROR", "POST Exception", error.message);
+    return NextResponse.json({ success: false }, { status: 500 });
+  }
 }
 
 export async function GET(req: NextRequest) {
-    const nonce = req.nextUrl.searchParams.get("nonce");
-    if (!nonce) return NextResponse.json({ status: "pending" });
-    const data = truecallerStore.get(nonce);
-    return NextResponse.json(data || { status: "pending" });
+  const nonce = req.nextUrl.searchParams.get("nonce");
+  if (!nonce) return NextResponse.json({ status: "pending" });
+
+  const client = await getRedis();
+  const data = await client.get(nonce);
+  return NextResponse.json(data ? JSON.parse(data) : { status: "pending" });
 }
