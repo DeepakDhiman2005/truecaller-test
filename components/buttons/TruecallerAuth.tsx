@@ -42,13 +42,13 @@ export default function TruecallerRealTest() {
     setBackendData(null);
     setStatus("Initiating Truecaller SDK...");
 
-    const partnerKey = process.env.NEXT_PUBLIC_TRUECALLER_PARTNER_KEY || "m9aggf2b26b2595f641dd8dde393e8c9ed09b";
+    const partnerKey = process.env.NEXT_PUBLIC_TRUECALLER_PARTNER_KEY || "zsyH7238a78c4b043444a96c02b328d657515";
     
     const params = new URLSearchParams({
       type: "btmsheet",
       requestNonce: id,
       partnerKey: partnerKey,
-      partnerName: process.env.NEXT_PUBLIC_TRUECALLER_APP_NAME || "quikkred-test",
+      partnerName: process.env.NEXT_PUBLIC_TRUECALLER_APP_NAME || "test",
       lang: "en",
       privacyUrl: `${window.location.origin}/privacy`,
       termsUrl: `${window.location.origin}/terms`,

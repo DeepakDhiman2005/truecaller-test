@@ -1,41 +1,44 @@
-import { truecallerStore, truecallerLogs } from "@/lib/truecallerStore";
+import { truecallerStore, pushLog } from "@/lib/truecallerStore";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
     const safeText = async (r: Response) => { try { return await r.text(); } catch { return ""; } };
     const safeJson = (text: string) => { try { return JSON.parse(text); } catch { return text; } };
 
-    try {
-        const body = await req.json().catch(() => null);
+    pushLog("INFO", "Callback POST received");
 
-        // 🟢 STEP 1: LOG EVERYTHING TO THE ARRAY IMMEDIATELY
-        truecallerLogs.push({
-            timestamp: new Date().toISOString(),
-            type: "CALLBACK_RECEIVED",
-            data: body
+    try {
+        const body = await req.json().catch((err) => {
+            pushLog("ERROR", "JSON parsing failed", err.message);
+            return null;
         });
 
-        if (!body?.requestId || !body?.accessToken || !body?.endpoint) {
-            return NextResponse.json({ success: false, error: "Invalid payload" }, { status: 400 });
+        if (!body) return NextResponse.json({ error: "Empty body" }, { status: 400 });
+
+        // 🟢 Log the incoming body for inspection
+        pushLog("DEBUG", `Processing RequestID: ${body.requestId}`, body);
+
+        if (!body.requestId || !body.accessToken || !body.endpoint) {
+            pushLog("ERROR", "Missing required Truecaller fields", body);
+            return NextResponse.json({ error: "Invalid Payload" }, { status: 400 });
         }
 
-        truecallerStore.set(body.requestId, {
-            status: "PROCESSING",
-            createdAt: Date.now(),
-            request: body,
-        });
+        truecallerStore.set(body.requestId, { status: "PROCESSING", createdAt: Date.now() });
 
-        // A) Call Alpha Backend
-        const alphaRes = await fetch("https://alpha.quikkred.in/test2/truecaller/callback", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-            cache: "no-store",
-        });
+        // --- Alpha Backend Sync ---
+        try {
+            const alphaRes = await fetch("https://alpha.quikkred.in/test2/truecaller/callback", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+                cache: "no-store",
+            });
+            if (!alphaRes.ok) pushLog("ERROR", `Alpha Backend returned ${alphaRes.status}`);
+        } catch (e: any) {
+            pushLog("ERROR", "Alpha Backend fetch exception", e.message);
+        }
 
-        const alphaData = safeJson(await safeText(alphaRes));
-
-        // B) Fetch Truecaller Profile
+        // --- Profile Fetch ---
         const profileRes = await fetch(body.endpoint, {
             headers: { Authorization: `Bearer ${body.accessToken}` },
             cache: "no-store",
@@ -43,27 +46,25 @@ export async function POST(req: NextRequest) {
 
         const profileData = safeJson(await safeText(profileRes));
 
-        // 🟢 STEP 2: UPDATE STORE & LOG ARRAY WITH RESULTS
-        const resultStatus = profileRes.ok ? "VERIFIED" : "ERROR";
-        const finalPayload = {
-            status: resultStatus,
-            profile: profileData,
-            alphaCallback: { ok: alphaRes.ok, data: alphaData },
-            verify: { ok: profileRes.ok, data: profileData }
-        };
+        if (!profileRes.ok) {
+            pushLog("ERROR", "Truecaller Profile fetch failed", profileData);
+            truecallerStore.set(body.requestId, { status: "ERROR", error: "Profile fetch failed" });
+            return NextResponse.json({ success: false }, { status: 502 });
+        }
 
-        truecallerStore.set(body.requestId, finalPayload);
-        
-        truecallerLogs.push({
-            timestamp: new Date().toISOString(),
-            type: "PROCESS_COMPLETE",
-            requestId: body.requestId,
-            status: resultStatus
+        // ✅ Success
+        pushLog("INFO", `Verification Successful for ${body.requestId}`);
+        truecallerStore.set(body.requestId, {
+            status: "VERIFIED",
+            profile: profileData,
+            createdAt: Date.now()
         });
 
         return NextResponse.json({ success: true });
+
     } catch (error: any) {
-        return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+        pushLog("ERROR", "Critical Route Exception", error.message);
+        return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
 
